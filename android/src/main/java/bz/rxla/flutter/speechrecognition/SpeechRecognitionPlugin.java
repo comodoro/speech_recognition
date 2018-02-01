@@ -2,16 +2,24 @@ package bz.rxla.flutter.speechrecognition;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.Manifest;
 import android.os.Bundle;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
+import android.support.v4.content.PermissionChecker;
 import android.util.Log;
+import android.widget.Toast;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
+import io.flutter.plugin.common.PluginRegistry;
 import io.flutter.plugin.common.PluginRegistry.Registrar;
+import io.flutter.plugin.common.PluginRegistry.RequestPermissionResultListener;
 
 import java.util.ArrayList;
 import java.util.Locale;
@@ -19,7 +27,8 @@ import java.util.Locale;
 /**
  * SpeechRecognitionPlugin
  */
-public class SpeechRecognitionPlugin implements MethodCallHandler, RecognitionListener {
+public class SpeechRecognitionPlugin implements MethodCallHandler, RecognitionListener,
+        PluginRegistry.RequestPermissionResultListener {
 
     private static final String LOG_TAG = "SpeechRecognitionPlugin";
 
@@ -29,13 +38,17 @@ public class SpeechRecognitionPlugin implements MethodCallHandler, RecognitionLi
     private boolean cancelled = false;
     private Intent recognizerIntent;
     private Activity activity;
+    private static Registrar registrar;
 
     /**
      * Plugin registration.
      */
     public static void registerWith(Registrar registrar) {
         final MethodChannel channel = new MethodChannel(registrar.messenger(), "speech_recognition");
-        channel.setMethodCallHandler(new SpeechRecognitionPlugin(registrar.activity(), channel));
+        SpeechRecognitionPlugin speechRecognitionPlugin = new SpeechRecognitionPlugin(registrar.activity(), channel);
+        channel.setMethodCallHandler(speechRecognitionPlugin);
+        registrar.addRequestPermissionResultListener(speechRecognitionPlugin);
+        speechRecognitionPlugin.registrar = registrar;
     }
 
     private SpeechRecognitionPlugin(Activity activity, MethodChannel channel) {
@@ -55,16 +68,27 @@ public class SpeechRecognitionPlugin implements MethodCallHandler, RecognitionLi
 
     @Override
     public void onMethodCall(MethodCall call, Result result) {
-
-        if (call.method.equals("speech.activate")) {
-            // FIXME => Dummy activation verification : we assume that speech recognition permission
-            // is declared in the manifest and accepted during installation ( AndroidSDK 21- )
+        if (call.method.equals("speech.hasPermissions")) {
+            result.success(hasRecordAudioPermission());
+        } else if (call.method.equals("speech.activate")) {
             result.success(true);
             Locale locale = activity.getResources().getConfiguration().locale;
             Log.d(LOG_TAG, "Current Locale : " + locale.toString());
             speechChannel.invokeMethod("speech.onCurrentLocale", locale.toString());
+        } else if (call.method.equals("speech.requestPermissions")) {
+            Log.d(LOG_TAG, "speech.requestPermissions");
+            if (ActivityCompat.shouldShowRequestPermissionRationale(activity,
+                    Manifest.permission.RECORD_AUDIO)) {
+                Toast.makeText(activity.getApplicationContext(), "This application needs the Record Audio permission for recognition to work", Toast.LENGTH_LONG).show();
+            } else {
+                Log.d(LOG_TAG, "Requesting permissions");
+                SpeechRecognitionPlugin.registrar.activity().requestPermissions(
+                        new String[]{Manifest.permission.RECORD_AUDIO},
+                        1);
+            }
+            result.success(hasRecordAudioPermission());
         } else if (call.method.equals("speech.listen")) {
-            recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, getLocale(call.arguments.toString()));
+            recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, getLocale(call.arguments.toString()));//activity.getResources().getConfiguration().locale.toString()
             cancelled = false;
             speech.startListening(recognizerIntent);
             result.success(true);
@@ -79,6 +103,15 @@ public class SpeechRecognitionPlugin implements MethodCallHandler, RecognitionLi
         } else {
             result.notImplemented();
         }
+    }
+
+
+    private boolean hasRecordAudioPermission() {
+//        int permissionCheck = ContextCompat.checkSelfPermission(activity,
+//                Manifest.permission.RECORD_AUDIO);
+        //return (permissionCheck == PackageManager.PERMISSION_GRANTED);
+        return (PermissionChecker.checkSelfPermission(registrar.activity(),
+                Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED);
     }
 
     private Locale getLocale(String code) {
@@ -153,4 +186,20 @@ public class SpeechRecognitionPlugin implements MethodCallHandler, RecognitionLi
         speechChannel.invokeMethod(isFinal ? "speech.onRecognitionComplete" : "speech.onSpeech", transcription);
     }
 
+    @Override                                                                                            
+    public boolean onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults) {
+        boolean granted = false;
+        switch (requestCode) {
+            case 1: {
+                // If request is cancelled, the result arrays are empty.
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    granted = true;
+                }
+                speechChannel.invokeMethod("speech.onPermission", granted);
+                return true;
+            }
+        }
+        return false;
+    }
 }

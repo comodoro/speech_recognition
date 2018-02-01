@@ -14,8 +14,10 @@ buildscript {
 allprojects {
     repositories {
         jcenter()
+        maven {
+            url "https://maven.google.com"
+        }    }
     }
-}
 
 apply plugin: 'com.android.library'
 
@@ -29,4 +31,8 @@ android {
     lintOptions {
         disable 'InvalidPackage'
     }
+}
+
+dependencies {
+     compile "com.android.support:support-v4:25.4.0"
 }
